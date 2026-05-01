@@ -623,6 +623,10 @@ object YTPlayerUtils {
         )
     }
 
+    fun invalidateSignatureTimestampCache() {
+        signatureTimestampCache = null
+    }
+
     /**
      * Resolves a playable stream URL for the given [format].
      *

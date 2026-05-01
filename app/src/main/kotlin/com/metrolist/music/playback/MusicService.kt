@@ -32,6 +32,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
+import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
@@ -2767,6 +2768,7 @@ class MusicService :
 
         // Clear decryption caches
         try {
+            YTPlayerUtils.invalidateSignatureTimestampCache()
             YTPlayerUtils.forceRefreshForVideo(mediaId)
             Timber.tag(TAG).d("Cleared decryption caches for $mediaId")
         } catch (e: Exception) {
@@ -2955,6 +2957,7 @@ class MusicService :
 
         // Clear decryption caches
         try {
+            YTPlayerUtils.invalidateSignatureTimestampCache()
             YTPlayerUtils.forceRefreshForVideo(mediaId)
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "Failed to clear decryption caches")
@@ -3677,6 +3680,7 @@ class MusicService :
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = mediaSession
 
+    @RequiresApi(Build.VERSION_CODES.S)
     override fun onUpdateNotification(
         session: MediaSession,
         startInForegroundRequired: Boolean,
