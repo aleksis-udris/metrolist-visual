@@ -27,12 +27,17 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 import javax.inject.Inject
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.selects.select
 
 private const val MAX_LYRICS_FETCH_MS = 30000L
 private const val PROVIDER_NONE = ""
@@ -89,87 +94,121 @@ constructor(
 
 
 
-    suspend fun getLyrics(mediaMetadata: MediaMetadata): LyricsWithProvider {
-        currentLyricsJob?.cancel()
-
-        val cached = cache.get(mediaMetadata.id)?.firstOrNull()
-        if (cached != null) {
-            return LyricsWithProvider(cached.lyrics, cached.providerName)
-        }
-
-        val orderedProviders = context.dataStore.data
-            .map { preferences -> resolveLyricsProviders(preferences) }
-            .first()
-
-        // Check network connectivity before making network requests
-        // Use synchronous check as fallback if flow doesn't emit
-        val isNetworkAvailable = try {
-            networkConnectivity.isCurrentlyConnected()
-        } catch (e: Exception) {
-            // If network check fails, try to proceed anyway
-            true
-        }
-
-        if (!isNetworkAvailable) {
-            return LyricsWithProvider(LYRICS_NOT_FOUND, PROVIDER_NONE)
-        }
-
-        val result = withTimeoutOrNull(MAX_LYRICS_FETCH_MS) {
-            val cleanedTitle = LyricsUtils.cleanTitleForSearch(mediaMetadata.title)
-            val enabledProviders = orderedProviders.filter { it.isEnabled(context) }
-
-            // Try first provider
-            val GRACE_PERIOD_MS = 4000L
-            val TIER_SIZE = 2 // berapa provider per tier
-
-            val channel = Channel<Pair<Int, LyricsWithProvider?>>(
-                capacity = enabledProviders.size
-            )
-            val launchedJobs = mutableListOf<Job>()
-
-            for (i in 0 until minOf(TIER_SIZE, enabledProviders.size)) {
-                launchedJobs += launchProviderJob(enabledProviders[i], i, channel, mediaMetadata, cleanedTitle)
-            }
-
-            var nextTierIndex = TIER_SIZE
-            var bestIndex = Int.MAX_VALUE
-            var bestResult: LyricsWithProvider? = null
-            val remaining = (0 until enabledProviders.size).toMutableSet()
-
-            // Collect timeout between priority
-            val collectJob = launch {
-                for ((index, res) in channel) {
-                    remaining.remove(index)
-                    if (res != null && index < bestIndex) {
-                        bestIndex = index
-                        bestResult = res
+    private suspend fun raceProviders(
+        providers: List<LyricsProvider>,
+        mediaMetadata: MediaMetadata,
+        cleanedTitle: String,
+    ): LyricsWithProvider? {
+        if (providers.isEmpty()) return null
+        return coroutineScope {
+            val deferreds: MutableList<Deferred<Pair<LyricsProvider, String>?>> = providers.map { provider ->
+                async {
+                    try {
+                        val result = withTimeoutOrNull(10_000L) {
+                            provider.getLyrics(
+                                context,
+                                mediaMetadata.id,
+                                cleanedTitle,
+                                mediaMetadata.artists.joinToString { it.name },
+                                mediaMetadata.duration,
+                                mediaMetadata.album?.title,
+                            )
+                        }
+                        if (result?.isSuccess == true) {
+                            val filtered = LyricsUtils.filterLyricsCreditLines(result.getOrNull()!!)
+                            provider to filtered
+                        } else null
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Timber.tag("LyricsHelper").w("${provider.name} threw: ${e.message}")
+                        null
                     }
-                    if (remaining.none { it < bestIndex }) {
-                        channel.cancel()
+                }
+            }.toMutableList()
+
+            val results = mutableListOf<Pair<LyricsProvider, String>>()
+
+            while (deferreds.isNotEmpty()) {
+                val (index, result) = select {
+                    deferreds.forEachIndexed { i, d ->
+                        d.onAwait { i to it }
+                    }
+                }
+                deferreds.removeAt(index)
+                if (result != null) {
+                    results.add(result)
+                    // If we already have a synced result, no need to wait for the rest
+                    if (lyricsTextLooksKaraoke(result.second)) {
+                        deferreds.forEach { it.cancel() }
                         break
                     }
                 }
             }
 
-            // launch if prev tier return none
-            while (nextTierIndex < enabledProviders.size && collectJob.isActive) {
-                delay(GRACE_PERIOD_MS)
-                if (bestResult == null && collectJob.isActive) {
-                    //previous still doesnt have them, do again
-                    for (i in nextTierIndex until minOf(nextTierIndex + TIER_SIZE, enabledProviders.size)) {
-                        launchedJobs += launchProviderJob(enabledProviders[i], i, channel, mediaMetadata, cleanedTitle)
-                    }
-                    nextTierIndex += TIER_SIZE
-                } else break // we got them skip it
-            }
+            // Prefer synced over plain, otherwise take first result
+            val best = results.firstOrNull { lyricsTextLooksKaraoke(it.second) }
+                ?: results.firstOrNull { lyricsTextLooksSynced(it.second) }
+                ?: results.firstOrNull()
 
-            collectJob.join()
-            launchedJobs.forEach { it.cancel() }
+            best?.let { LyricsWithProvider(it.second, it.first.name) }
+        }
+    }
 
-            bestResult ?: LyricsWithProvider(LYRICS_NOT_FOUND, PROVIDER_NONE)
+    suspend fun getLyrics(mediaMetadata: MediaMetadata): LyricsWithProvider {
+        currentLyricsJob?.cancel()
+
+        val cached = cache.get(mediaMetadata.id)?.firstOrNull()
+        if (cached != null) return LyricsWithProvider(cached.lyrics, cached.providerName)
+
+        val isNetworkAvailable = try {
+            networkConnectivity.isCurrentlyConnected()
+        } catch (_: Exception) { true }
+
+        if (!isNetworkAvailable) return LyricsWithProvider(LYRICS_NOT_FOUND, PROVIDER_NONE)
+
+        val cleanedTitle = LyricsUtils.cleanTitleForSearch(mediaMetadata.title)
+        val preferences = context.dataStore.data.first()
+        val enabledProviders = resolveLyricsProviders(preferences).filter { it.isEnabled(context) }
+
+        val youtubeProviders = enabledProviders.filter {
+            it is YouTubeLyricsProvider || it is YouTubeSubtitleLyricsProvider
+        }
+        val primaryProviders = enabledProviders.filter {
+            it !is YouTubeLyricsProvider && it !is YouTubeSubtitleLyricsProvider
         }
 
-        return result ?: LyricsWithProvider(LYRICS_NOT_FOUND, PROVIDER_NONE)
+        return withTimeoutOrNull(MAX_LYRICS_FETCH_MS) {
+            coroutineScope {
+                // Try all non-YouTube providers in parallel first
+                val winner = raceProviders(primaryProviders, mediaMetadata, cleanedTitle)
+
+                if (winner != null) return@coroutineScope winner
+
+                // Fall back to YouTube providers sequentially
+                for (provider in youtubeProviders) {
+                    val result = runCatching {
+                        withTimeoutOrNull(10_000L) {
+                            provider.getLyrics(
+                                context,
+                                mediaMetadata.id,
+                                cleanedTitle,
+                                mediaMetadata.artists.joinToString { it.name },
+                                mediaMetadata.duration,
+                                mediaMetadata.album?.title,
+                            )
+                        }
+                    }.getOrNull()
+                    if (result?.isSuccess == true) {
+                        return@coroutineScope LyricsWithProvider(
+                            LyricsUtils.filterLyricsCreditLines(result.getOrNull()!!),
+                            provider.name
+                        )
+                    }
+                }
+                LyricsWithProvider(LYRICS_NOT_FOUND, PROVIDER_NONE)
+            }
+        } ?: LyricsWithProvider(LYRICS_NOT_FOUND, PROVIDER_NONE)
     }
 
     suspend fun getAllLyrics(
@@ -235,7 +274,7 @@ constructor(
                     }
                 }
             }
-            otherJobs.forEach { it.join() }
+            otherJobs.joinAll()
 
             // Step 2: Only fetch from LyricsPlus if other providers combined returned <= 2 lyrics texts
             val otherLyricsCount = allResult.count { it.providerName != "LyricsPlus" }

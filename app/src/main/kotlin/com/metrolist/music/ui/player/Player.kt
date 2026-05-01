@@ -196,6 +196,7 @@ import com.metrolist.music.utils.dataStore
 import androidx.datastore.preferences.core.edit
 import com.metrolist.music.constants.SleepTimerFadeOutKey
 import com.metrolist.music.constants.SleepTimerStopAfterCurrentSongKey
+import com.metrolist.music.ui.menu.AddToPlaylistDialog
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1227,6 +1228,31 @@ fun BottomSheetPlayer(
                         }
                     }
                 } else {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(24.dp))
+                            .background(textButtonColor)
+                            .clickable {
+                                menuState.show {
+                                    AddToPlaylistDialog(
+                                        isVisible = true,
+                                        onGetSong = { listOf(mediaMetadata.id) },
+                                        onDismiss = menuState::dismiss,
+                                    )
+                                }
+                            },
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.queue_music),
+                            contentDescription = null,
+                            tint = iconButtonColor,
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .size(24.dp),
+                        )
+                    }
+                    Spacer(modifier = Modifier.size(12.dp))
                     AnimatedContent(targetState = showInlineLyrics, label = "ShareButton") { showLyrics ->
                         if (showLyrics) {
                             Box(

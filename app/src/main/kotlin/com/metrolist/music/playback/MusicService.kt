@@ -3245,15 +3245,17 @@ class MusicService :
             }
 
             Timber.tag("MusicService").i("FETCHING STREAM: $mediaId | quality=$audioQuality")
-            val isUploaded = database.getSongByIdBlocking(mediaId)?.song?.isUploaded == true
             val playbackData =
                 runBlocking(Dispatchers.IO) {
-                    YTPlayerUtils.playerResponseForPlayback(
-                        mediaId,
-                        isUploadedHint = isUploaded,
-                        audioQuality = audioQuality,
-                        connectivityManager = connectivityManager,
-                    )
+                    withContext(Dispatchers.IO) {
+                        val isUploaded = database.getSongByIdBlocking(mediaId)?.song?.isUploaded == true
+                        YTPlayerUtils.playerResponseForPlayback(
+                            mediaId,
+                            isUploadedHint = isUploaded,
+                            audioQuality = audioQuality,
+                            connectivityManager = connectivityManager,
+                        )
+                    }
                 }.getOrElse { throwable ->
                     when (throwable) {
                         is PlaybackException -> {

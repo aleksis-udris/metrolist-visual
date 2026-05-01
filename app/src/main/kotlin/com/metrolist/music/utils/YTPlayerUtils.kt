@@ -50,6 +50,11 @@ object YTPlayerUtils {
 
     private val poTokenGenerator = PoTokenGenerator()
 
+    // Cache for signature timestamp — YouTube's player JS only changes ~weekly.
+    // Structure: Pair<SignatureTimestampResult, expiryEpochMs>
+    private var signatureTimestampCache: Pair<SignatureTimestampResult, Long>? = null
+    private const val SIG_TIMESTAMP_CACHE_TTL_MS = 60 * 60 * 1000L // 1 hour
+
     private val MAIN_CLIENT: YouTubeClient = WEB_REMIX
 
     private val STREAM_FALLBACK_CLIENTS: Array<YouTubeClient> = arrayOf(
@@ -583,17 +588,28 @@ object YTPlayerUtils {
      * Detects age-restricted content early if NewPipe reports it.
      */
     private fun getSignatureTimestampOrNull(videoId: String): SignatureTimestampResult {
-        Timber.tag(logTag).d("Getting signature timestamp for videoId: $videoId")
-        com.metrolist.innertube.NewPipeUtils  // Ensure NewPipe downloader is initialized before use
+        val now = System.currentTimeMillis()
+
+        // Return cached result if it's still fresh
+        signatureTimestampCache?.let { (cached, expiry) ->
+            if (now < expiry) {
+                Timber.tag(logTag).d("Using cached signature timestamp: ${cached.timestamp}")
+                return cached
+            }
+        }
+
+        Timber.tag(logTag).d("Cache miss — fetching signature timestamp for videoId: $videoId")
         val result = NewPipeExtractor.getSignatureTimestamp(videoId)
         return result.fold(
             onSuccess = { timestamp ->
                 Timber.tag(logTag).d("Signature timestamp obtained: $timestamp")
-                SignatureTimestampResult(timestamp, isAgeRestricted = false)
+                val fresh = SignatureTimestampResult(timestamp, isAgeRestricted = false)
+                signatureTimestampCache = fresh to (now + SIG_TIMESTAMP_CACHE_TTL_MS)
+                fresh
             },
             onFailure = { error ->
                 val isAgeRestricted = error.message?.contains("age-restricted", ignoreCase = true) == true ||
-                    error.cause?.message?.contains("age-restricted", ignoreCase = true) == true
+                        error.cause?.message?.contains("age-restricted", ignoreCase = true) == true
                 if (isAgeRestricted) {
                     Timber.tag(logTag).d("Age-restricted content detected from NewPipe")
                     Timber.tag(TAG).i("Age-restricted detected early via NewPipe: videoId=$videoId")
@@ -601,6 +617,7 @@ object YTPlayerUtils {
                     Timber.tag(logTag).e(error, "Failed to get signature timestamp")
                     reportException(error)
                 }
+                // Do NOT cache failures — the next song should retry
                 SignatureTimestampResult(null, isAgeRestricted)
             }
         )
