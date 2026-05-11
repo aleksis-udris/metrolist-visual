@@ -25,6 +25,7 @@ import com.materialkolor.PaletteStyle
 import com.materialkolor.dynamiccolor.ColorSpec
 import com.materialkolor.rememberDynamicColorScheme
 import com.materialkolor.score.Score
+import com.metrolist.music.constants.ThemePaletteStyle
 
 val DefaultThemeColor = Color(0xFFED5564)
 
@@ -33,6 +34,7 @@ fun MetrolistTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     pureBlack: Boolean = false,
     themeColor: Color = DefaultThemeColor,
+    paletteStyle: PaletteStyle = PaletteStyle.TonalSpot,
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
@@ -49,7 +51,7 @@ fun MetrolistTheme(
             seedColor = themeColor, // themeColor is guaranteed non-default here
             isDark = darkTheme,
             specVersion = ColorSpec.SpecVersion.SPEC_2025,
-            style = PaletteStyle.TonalSpot // Keep existing style
+            style = paletteStyle
         )
     }
 
@@ -101,6 +103,17 @@ fun ColorScheme.pureBlack(apply: Boolean) =
         surface = Color.Black,
         background = Color.Black
     ) else this
+
+fun ThemePaletteStyle.toPaletteStyle(): PaletteStyle = when (this) {
+    ThemePaletteStyle.TONAL_SPOT -> PaletteStyle.TonalSpot
+    ThemePaletteStyle.VIBRANT -> PaletteStyle.Vibrant
+    ThemePaletteStyle.EXPRESSIVE -> PaletteStyle.Expressive
+    ThemePaletteStyle.NEUTRAL -> PaletteStyle.Neutral
+    ThemePaletteStyle.FIDELITY -> PaletteStyle.Fidelity
+    ThemePaletteStyle.CONTENT -> PaletteStyle.Content
+    ThemePaletteStyle.FRUITSALAD -> PaletteStyle.FruitSalad
+    ThemePaletteStyle.RAINBOW -> PaletteStyle.Rainbow
+}
 
 val ColorSaver = object : Saver<Color, Int> {
     override fun restore(value: Int): Color = Color(value)

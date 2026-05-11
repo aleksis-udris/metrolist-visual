@@ -87,6 +87,10 @@
     <string name="seek_seconds_addup_description">When enabled, adds 5 extra seconds incrementally with each seek</string>
 
     <string name="similar_content">Similar content</string>
+    <string name="queue_now_playing">Now Playing</string>
+    <string name="queue_next_in_queue">Next in Queue</string>
+    <string name="queue_up_next">Up Next</string>
+    <string name="queue_suggestions">Suggestions</string>
 
     <string name="player_background_style">Player background style</string>
     <string name="player_background_solid">Solid</string>
@@ -723,6 +727,7 @@
     <string name="crash_no_log">No crash log available</string>
 
     <!-- Theme Palette Names -->
+    <string name="palette_bluegrey">Blue Grey</string>
     <string name="palette_dynamic">Dynamic</string>
     <string name="palette_crimson">Crimson</string>
     <string name="palette_rose">Rose</string>
@@ -743,6 +748,17 @@
     <string name="palette_brown">Brown</string>
     <string name="palette_grey">Grey</string>
     <string name="palette_blue_grey">Blue Grey</string>
+
+    <!-- Theme Palette Style Names -->
+    <string name="palette_style_rainbow">Rainbow</string>
+    <string name="palette_style_fruitsalad">Fruitsalad</string>
+    <string name="palette_style_tonal_spot">Tonal Spot</string>
+    <string name="palette_style_vibrant">Vibrant</string>
+    <string name="palette_style_expressive">Expressive</string>
+    <string name="palette_style_content">Content</string>
+    <string name="palette_style_fidelity">Fidelity</string>
+    <string name="palette_style_neutral">Neutral</string>
+    <string name="color_palette_style">Palette Style</string>
 
     <!-- Theme Content Descriptions -->
     <string name="cd_back">Back</string>

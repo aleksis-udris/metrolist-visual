@@ -125,6 +125,7 @@ import com.metrolist.music.ui.utils.ShowMediaInfo
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.makeTimeString
 import com.metrolist.music.utils.rememberPreference
+import com.metrolist.music.playback.MusicService
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -139,7 +140,7 @@ import android.widget.Toast
 import androidx.compose.runtime.derivedStateOf
 import com.metrolist.music.constants.SleepTimerFadeOutKey
 import com.metrolist.music.constants.SleepTimerStopAfterCurrentSongKey
-import androidx.compose.runtime.derivedStateOf
+
 import androidx.compose.material3.Button
 
 
@@ -714,7 +715,7 @@ fun Queue(
                     if (!playerConnection.player.shuffleModeEnabled) {
                         playerConnection.player.moveMediaItem(safeFrom, safeTo)
                     } else {
-                        playerConnection.player.setShuffleOrder(
+                        playerConnection.player.shuffleOrder =
                             DefaultShuffleOrder(
                                 queueWindows
                                     .map { it.firstPeriodIndex }
@@ -722,8 +723,7 @@ fun Queue(
                                     .move(safeFrom, safeTo)
                                     .toIntArray(),
                                 System.currentTimeMillis(),
-                            ),
-                        )
+                            )
                     }
                     dragInfo = null
                 }
@@ -770,44 +770,65 @@ fun Queue(
                     )
                 }
 
-                itemsIndexed(
-                    items = mutableQueueWindows,
-                    key = { _, item -> item.uid.hashCode() },
-                ) { index, window ->
-                    ReorderableItem(
-                        state = reorderableState,
-                        key = window.uid.hashCode(),
-                    ) {
-                        val currentItem by rememberUpdatedState(window)
-                        val isActive = window.uid == currentPlayingUid
-                        val dismissBoxState =
-                            rememberSwipeToDismissBoxState(
-                                positionalThreshold = { totalDistance -> totalDistance },
-                            )
+                // ── Partition queue into sections ──────────────────────────────────────
+                // Items before the current index are "past" — we still show them under Up Next
+                // so the user can scroll back and see what played. Items at/after current:
+                //   • currentWindowIndex → Now Playing (single entry)
+                //   • source == user_next || user_queue → Next in Queue (user explicitly queued)
+                //   • source == null (app-loaded playlist/album/radio) → Up Next
+                val windowsAfterCurrent = mutableQueueWindows
+                    .mapIndexed { idx, w -> idx to w }
+                    .filter { (idx, _) -> idx > currentWindowIndex }
 
-                        var processedDismiss by remember { mutableStateOf(false) }
-                        val removedSongMsg =
-                            stringResource(R.string.removed_song_from_playlist, currentItem.mediaItem.metadata?.title ?: "")
-                        val undoStr = stringResource(R.string.undo)
-                        LaunchedEffect(dismissBoxState.currentValue) {
-                            val dv = dismissBoxState.currentValue
-                            if (!processedDismiss && !isListenTogetherGuest && (
-                                    dv == SwipeToDismissBoxValue.StartToEnd ||
-                                        dv == SwipeToDismissBoxValue.EndToStart
-                                )
-                            ) {
-                                processedDismiss = true
-                                playerConnection.player.removeMediaItem(currentItem.firstPeriodIndex)
-                                dismissJob?.cancel()
-                                dismissJob =
-                                    coroutineScope.launch {
-                                        val snackbarResult =
-                                            snackbarHostState.showSnackbar(
-                                                message = removedSongMsg,
-                                                actionLabel = undoStr,
-                                                duration = SnackbarDuration.Short,
-                                            )
-                                        if (snackbarResult == SnackbarResult.ActionPerformed) {
+                val userQueuedWindows = windowsAfterCurrent.filter { (_, w) ->
+                    val src = w.mediaItem.mediaMetadata.extras
+                        ?.getString(MusicService.QUEUE_SOURCE_KEY)
+                    src == MusicService.QUEUE_SOURCE_USER_NEXT ||
+                        src == MusicService.QUEUE_SOURCE_USER_QUEUE
+                }
+                val appQueuedWindows = windowsAfterCurrent.filter { (_, w) ->
+                    w.mediaItem.mediaMetadata.extras
+                        ?.getString(MusicService.QUEUE_SOURCE_KEY) == null
+                }
+
+                // Helper: builds the draggable/swipeable item content shared by all sections
+                @Composable
+                fun queueWindowItem(
+                    scope: androidx.compose.foundation.lazy.LazyItemScope,
+                    index: Int,
+                    window: androidx.media3.common.Timeline.Window,
+                ) {
+                    val reorderKey = window.uid.hashCode()
+                    scope.run {
+                        ReorderableItem(state = reorderableState, key = reorderKey) {
+                            val currentItem by rememberUpdatedState(window)
+                            val isActive = window.uid == currentPlayingUid
+                            val dismissBoxState = rememberSwipeToDismissBoxState(
+                                positionalThreshold = { total -> total },
+                            )
+                            var processedDismiss by remember { mutableStateOf(false) }
+                            val removedSongMsg = stringResource(
+                                R.string.removed_song_from_playlist,
+                                currentItem.mediaItem.metadata?.title ?: "",
+                            )
+                            val undoStr = stringResource(R.string.undo)
+                            LaunchedEffect(dismissBoxState.currentValue) {
+                                val dv = dismissBoxState.currentValue
+                                if (!processedDismiss && !isListenTogetherGuest && (
+                                        dv == SwipeToDismissBoxValue.StartToEnd ||
+                                            dv == SwipeToDismissBoxValue.EndToStart
+                                    )
+                                ) {
+                                    processedDismiss = true
+                                    playerConnection.player.removeMediaItem(currentItem.firstPeriodIndex)
+                                    dismissJob?.cancel()
+                                    dismissJob = coroutineScope.launch {
+                                        val result = snackbarHostState.showSnackbar(
+                                            message = removedSongMsg,
+                                            actionLabel = undoStr,
+                                            duration = SnackbarDuration.Short,
+                                        )
+                                        if (result == SnackbarResult.ActionPerformed) {
                                             playerConnection.player.addMediaItem(currentItem.mediaItem)
                                             playerConnection.player.moveMediaItem(
                                                 mutableQueueWindows.size,
@@ -815,78 +836,72 @@ fun Queue(
                                             )
                                         }
                                     }
+                                }
+                                if (dv == SwipeToDismissBoxValue.Settled) processedDismiss = false
                             }
-                            if (dv == SwipeToDismissBoxValue.Settled) {
-                                processedDismiss = false
-                            }
-                        }
 
-                        val onCheckedChange: (Boolean) -> Unit = {
-                            if (it) {
-                                selection.add(window.mediaItem.mediaId)
-                            } else {
-                                selection.remove(window.mediaItem.mediaId)
+                            val onCheckedChange: (Boolean) -> Unit = {
+                                if (it) selection.add(window.mediaItem.mediaId)
+                                else selection.remove(window.mediaItem.mediaId)
                             }
-                        }
 
-                        val content: @Composable () -> Unit = {
-                            Row(
-                                horizontalArrangement = Arrangement.Center,
-                                modifier = Modifier.animateItem(),
-                            ) {
-                                MediaMetadataListItem(
-                                    mediaMetadata = window.mediaItem.metadata!!,
-                                    isSelected = false,
-                                    isActive = isActive,
-                                    isPlaying = isPlaying && isActive,
-                                    trailingContent = {
-                                        if (inSelectMode) {
-                                            Checkbox(
-                                                checked = window.mediaItem.mediaId in selection,
-                                                onCheckedChange = onCheckedChange,
-                                            )
-                                        } else {
-                                            if (!isListenTogetherGuest) {
-                                                IconButton(
-                                                    onClick = {
-                                                        menuState.show {
-                                                            QueueMenu(
-                                                                mediaMetadata = window.mediaItem.metadata!!,
-                                                                navController = navController,
-                                                                playerBottomSheetState = playerBottomSheetState,
-                                                                onShowDetailsDialog = {
-                                                                    window.mediaItem.mediaId.let {
-                                                                        bottomSheetPageState.show {
-                                                                            ShowMediaInfo(it)
+                            val content: @Composable () -> Unit = {
+                                Row(
+                                    horizontalArrangement = Arrangement.Center,
+                                    modifier = Modifier.animateItem(),
+                                ) {
+                                    MediaMetadataListItem(
+                                        mediaMetadata = window.mediaItem.metadata!!,
+                                        isSelected = false,
+                                        isActive = isActive,
+                                        isPlaying = isPlaying && isActive,
+                                        trailingContent = {
+                                            if (inSelectMode) {
+                                                Checkbox(
+                                                    checked = window.mediaItem.mediaId in selection,
+                                                    onCheckedChange = onCheckedChange,
+                                                )
+                                            } else {
+                                                if (!isListenTogetherGuest) {
+                                                    IconButton(
+                                                        onClick = {
+                                                            menuState.show {
+                                                                QueueMenu(
+                                                                    mediaMetadata = window.mediaItem.metadata!!,
+                                                                    navController = navController,
+                                                                    playerBottomSheetState = playerBottomSheetState,
+                                                                    onShowDetailsDialog = {
+                                                                        window.mediaItem.mediaId.let {
+                                                                            bottomSheetPageState.show {
+                                                                                ShowMediaInfo(it)
+                                                                            }
                                                                         }
-                                                                    }
-                                                                },
-                                                                onDismiss = menuState::dismiss,
-                                                            )
-                                                        }
-                                                    },
-                                                ) {
-                                                    Icon(
-                                                        painter = painterResource(R.drawable.more_vert),
-                                                        contentDescription = null,
-                                                    )
+                                                                    },
+                                                                    onDismiss = menuState::dismiss,
+                                                                )
+                                                            }
+                                                        },
+                                                    ) {
+                                                        Icon(
+                                                            painter = painterResource(R.drawable.more_vert),
+                                                            contentDescription = null,
+                                                        )
+                                                    }
+                                                }
+                                                if (!locked && !isListenTogetherGuest) {
+                                                    IconButton(
+                                                        onClick = { },
+                                                        modifier = Modifier.draggableHandle(),
+                                                    ) {
+                                                        Icon(
+                                                            painter = painterResource(R.drawable.drag_handle),
+                                                            contentDescription = null,
+                                                        )
+                                                    }
                                                 }
                                             }
-                                            if (!locked && !isListenTogetherGuest) {
-                                                IconButton(
-                                                    onClick = { },
-                                                    modifier = Modifier.draggableHandle(),
-                                                ) {
-                                                    Icon(
-                                                        painter = painterResource(R.drawable.drag_handle),
-                                                        contentDescription = null,
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    },
-                                    modifier =
-                                        Modifier
+                                        },
+                                        modifier = Modifier
                                             .fillMaxWidth()
                                             .background(background)
                                             .combinedClickable(
@@ -896,25 +911,19 @@ fun Queue(
                                                     } else if (!isListenTogetherGuest) {
                                                         if (index == currentWindowIndex) {
                                                             if (isCasting) {
-                                                                if (castIsPlaying) {
-                                                                    castHandler?.pause()
-                                                                } else {
-                                                                    castHandler?.play()
-                                                                }
+                                                                if (castIsPlaying) castHandler?.pause()
+                                                                else castHandler?.play()
                                                             } else {
                                                                 playerConnection.togglePlayPause()
                                                             }
                                                         } else {
                                                             if (isCasting) {
-                                                                val mediaId = window.mediaItem.mediaId
-                                                                val navigated = castHandler?.navigateToMediaIfInQueue(mediaId) ?: false
-                                                                if (!navigated) {
+                                                                val navigated = castHandler
+                                                                    ?.navigateToMediaIfInQueue(window.mediaItem.mediaId) ?: false
+                                                                if (!navigated)
                                                                     playerConnection.player.seekToDefaultPosition(window.firstPeriodIndex)
-                                                                }
                                                             } else {
-                                                                playerConnection.player.seekToDefaultPosition(
-                                                                    window.firstPeriodIndex,
-                                                                )
+                                                                playerConnection.player.seekToDefaultPosition(window.firstPeriodIndex)
                                                                 playerConnection.player.playWhenReady = true
                                                             }
                                                         }
@@ -928,35 +937,74 @@ fun Queue(
                                                     }
                                                 },
                                             ),
-                                )
+                                    )
+                                }
                             }
-                        }
 
-                        if (locked) {
-                            content()
-                        } else {
-                            SwipeToDismissBox(
-                                state = dismissBoxState,
-                                backgroundContent = {},
-                            ) {
+                            if (locked) {
                                 content()
+                            } else {
+                                SwipeToDismissBox(
+                                    state = dismissBoxState,
+                                    backgroundContent = {},
+                                ) { content() }
                             }
                         }
                     }
                 }
 
-                if (automix.isNotEmpty()) {
-                    item(key = "automix_divider") {
-                        HorizontalDivider(
-                            modifier =
-                                Modifier
-                                    .padding(vertical = 8.dp, horizontal = 4.dp)
-                                    .animateItem(),
-                        )
+                // ── NOW PLAYING ────────────────────────────────────────────────────────
+                item(key = "section_now_playing") {
+                    QueueSectionHeader(
+                        title = stringResource(R.string.queue_now_playing),
+                        modifier = Modifier.animateItem(),
+                    )
+                }
+                val nowPlayingWindow = mutableQueueWindows.getOrNull(currentWindowIndex)
+                if (nowPlayingWindow != null) {
+                    item(key = "now_playing_${nowPlayingWindow.uid.hashCode()}") {
+                        queueWindowItem(this, currentWindowIndex, nowPlayingWindow)
+                    }
+                }
 
-                        Text(
-                            text = stringResource(R.string.similar_content),
-                            modifier = Modifier.padding(start = 16.dp),
+                // ── NEXT IN QUEUE (user-queued) ────────────────────────────────────────
+                if (userQueuedWindows.isNotEmpty()) {
+                    item(key = "section_next_in_queue") {
+                        QueueSectionHeader(
+                            title = stringResource(R.string.queue_next_in_queue),
+                            modifier = Modifier.animateItem(),
+                        )
+                    }
+                    itemsIndexed(
+                        items = userQueuedWindows,
+                        key = { _, (_, w) -> "uq_${w.uid.hashCode()}" },
+                    ) { _, (realIdx, window) ->
+                        queueWindowItem(this, realIdx, window)
+                    }
+                }
+
+                // ── UP NEXT (app-queued — playlist / album / radio) ────────────────────
+                if (appQueuedWindows.isNotEmpty()) {
+                    item(key = "section_up_next") {
+                        QueueSectionHeader(
+                            title = stringResource(R.string.queue_up_next),
+                            modifier = Modifier.animateItem(),
+                        )
+                    }
+                    itemsIndexed(
+                        items = appQueuedWindows,
+                        key = { _, (_, w) -> "aq_${w.uid.hashCode()}" },
+                    ) { _, (realIdx, window) ->
+                        queueWindowItem(this, realIdx, window)
+                    }
+                }
+
+                // ── SUGGESTIONS (automix) ──────────────────────────────────────────────
+                if (automix.isNotEmpty()) {
+                    item(key = "section_suggestions") {
+                        QueueSectionHeader(
+                            title = stringResource(R.string.queue_suggestions),
+                            modifier = Modifier.animateItem(),
                         )
                     }
 
@@ -964,19 +1012,14 @@ fun Queue(
                         items = automix,
                         key = { _, it -> it.mediaId },
                     ) { index, item ->
-                        Row(
-                            horizontalArrangement = Arrangement.Center,
-                        ) {
+                        Row(horizontalArrangement = Arrangement.Center) {
                             MediaMetadataListItem(
                                 mediaMetadata = item.metadata!!,
                                 trailingContent = {
                                     if (!isListenTogetherGuest) {
                                         IconButton(
                                             onClick = {
-                                                playerConnection.service.playNextAutomix(
-                                                    item,
-                                                    index,
-                                                )
+                                                playerConnection.service.playNextAutomix(item, index)
                                             },
                                         ) {
                                             Icon(
@@ -986,10 +1029,7 @@ fun Queue(
                                         }
                                         IconButton(
                                             onClick = {
-                                                playerConnection.service.addToQueueAutomix(
-                                                    item,
-                                                    index,
-                                                )
+                                                playerConnection.service.addToQueueAutomix(item, index)
                                             },
                                         ) {
                                             Icon(
@@ -999,29 +1039,28 @@ fun Queue(
                                         }
                                     }
                                 },
-                                modifier =
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .combinedClickable(
-                                            onClick = {},
-                                            onLongClick = {
-                                                menuState.show {
-                                                    QueueMenu(
-                                                        mediaMetadata = item.metadata!!,
-                                                        navController = navController,
-                                                        playerBottomSheetState = playerBottomSheetState,
-                                                        onShowDetailsDialog = {
-                                                            item.mediaId.let {
-                                                                bottomSheetPageState.show {
-                                                                    ShowMediaInfo(it)
-                                                                }
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .combinedClickable(
+                                        onClick = {},
+                                        onLongClick = {
+                                            menuState.show {
+                                                QueueMenu(
+                                                    mediaMetadata = item.metadata!!,
+                                                    navController = navController,
+                                                    playerBottomSheetState = playerBottomSheetState,
+                                                    onShowDetailsDialog = {
+                                                        item.mediaId.let {
+                                                            bottomSheetPageState.show {
+                                                                ShowMediaInfo(it)
                                                             }
-                                                        },
-                                                        onDismiss = menuState::dismiss,
-                                                    )
-                                                }
-                                            },
-                                        ).animateItem(),
+                                                        }
+                                                    },
+                                                    onDismiss = menuState::dismiss,
+                                                )
+                                            }
+                                        },
+                                    ).animateItem(),
                             )
                         }
                     }
@@ -1269,6 +1308,24 @@ fun Queue(
                     ).align(Alignment.BottomCenter),
         )
     }
+}
+
+/**
+ * Spotify-style section header for queue sections (Now Playing, Next in Queue, Up Next, Suggestions).
+ */
+@Composable
+private fun QueueSectionHeader(
+    title: String,
+    modifier: Modifier = Modifier,
+) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 6.dp),
+    )
 }
 
 @Composable

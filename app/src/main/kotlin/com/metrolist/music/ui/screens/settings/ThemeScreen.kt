@@ -78,6 +78,8 @@ import com.metrolist.music.constants.DynamicThemeKey
 import com.metrolist.music.constants.PureBlackKey
 import com.metrolist.music.constants.PureBlackMiniPlayerKey
 import com.metrolist.music.constants.SelectedThemeColorKey
+import com.metrolist.music.constants.ThemePaletteStyle
+import com.metrolist.music.constants.ThemePaletteStyleKey
 import com.metrolist.music.ui.theme.DefaultThemeColor
 import com.metrolist.music.ui.theme.MetrolistTheme
 import com.metrolist.music.utils.rememberEnumPreference
@@ -132,6 +134,10 @@ fun ThemeScreen(
         DefaultThemeColor.toArgb()
     )
     val (_, onDynamicThemeChange) = rememberPreference(DynamicThemeKey, defaultValue = true)
+    val (themePaletteStyle, onThemePaletteStyleChange) = rememberEnumPreference(
+        ThemePaletteStyleKey,
+        defaultValue = ThemePaletteStyle.TONAL_SPOT,
+    )
 
     val selectedThemeColor = Color(selectedThemeColorInt)
     val configuration = LocalConfiguration.current
@@ -154,7 +160,9 @@ fun ThemeScreen(
             pureBlack = pureBlack,
             onPureBlackChange = onPureBlackChange,
             selectedThemeColor = selectedThemeColor,
-            onSelectedThemeColorChange = handleColorSelection
+            onSelectedThemeColorChange = handleColorSelection,
+            themePaletteStyle = themePaletteStyle,
+            onThemePaletteStyleChange = onThemePaletteStyleChange,
         )
     } else {
         PortraitThemeLayout(
@@ -164,7 +172,9 @@ fun ThemeScreen(
             pureBlack = pureBlack,
             onPureBlackChange = onPureBlackChange,
             selectedThemeColor = selectedThemeColor,
-            onSelectedThemeColorChange = handleColorSelection
+            onSelectedThemeColorChange = handleColorSelection,
+            themePaletteStyle = themePaletteStyle,
+            onThemePaletteStyleChange = onThemePaletteStyleChange,
         )
     }
 
@@ -189,7 +199,9 @@ fun PortraitThemeLayout(
     pureBlack: Boolean,
     onPureBlackChange: (Boolean) -> Unit,
     selectedThemeColor: Color,
-    onSelectedThemeColorChange: (Color) -> Unit
+    onSelectedThemeColorChange: (Color) -> Unit,
+    themePaletteStyle: ThemePaletteStyle,
+    onThemePaletteStyleChange: (ThemePaletteStyle) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -220,7 +232,9 @@ fun PortraitThemeLayout(
             pureBlack = pureBlack,
             onPureBlackChange = onPureBlackChange,
             selectedThemeColor = selectedThemeColor,
-            onSelectedThemeColorChange = onSelectedThemeColorChange
+            onSelectedThemeColorChange = onSelectedThemeColorChange,
+            themePaletteStyle = themePaletteStyle,
+            onThemePaletteStyleChange = onThemePaletteStyleChange,
         )
 
         Spacer(modifier = Modifier.height(120.dp))
@@ -235,7 +249,9 @@ fun LandscapeThemeLayout(
     pureBlack: Boolean,
     onPureBlackChange: (Boolean) -> Unit,
     selectedThemeColor: Color,
-    onSelectedThemeColorChange: (Color) -> Unit
+    onSelectedThemeColorChange: (Color) -> Unit,
+    themePaletteStyle: ThemePaletteStyle,
+    onThemePaletteStyleChange: (ThemePaletteStyle) -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -277,7 +293,9 @@ fun LandscapeThemeLayout(
                 pureBlack = pureBlack,
                 onPureBlackChange = onPureBlackChange,
                 selectedThemeColor = selectedThemeColor,
-                onSelectedThemeColorChange = onSelectedThemeColorChange
+                onSelectedThemeColorChange = onSelectedThemeColorChange,
+                themePaletteStyle = themePaletteStyle,
+                onThemePaletteStyleChange = onThemePaletteStyleChange,
             )
 
             Spacer(modifier = Modifier.height(80.dp))
@@ -292,7 +310,9 @@ fun ThemeControls(
     pureBlack: Boolean,
     onPureBlackChange: (Boolean) -> Unit,
     selectedThemeColor: Color,
-    onSelectedThemeColorChange: (Color) -> Unit
+    onSelectedThemeColorChange: (Color) -> Unit,
+    themePaletteStyle: ThemePaletteStyle,
+    onThemePaletteStyleChange: (ThemePaletteStyle) -> Unit,
 ) {
     Card(
         modifier = Modifier
@@ -409,7 +429,102 @@ fun ThemeControls(
                     }
                 }
             }
+
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = stringResource(R.string.color_palette_style),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+                    contentPadding = PaddingValues(horizontal = 4.dp)
+                ) {
+                    items(ThemePaletteStyle.entries) { style ->
+                        val isSelected = style == themePaletteStyle
+                        val styleName = stringResource(
+                            when (style) {
+                                ThemePaletteStyle.TONAL_SPOT -> R.string.palette_style_tonal_spot
+                                ThemePaletteStyle.VIBRANT -> R.string.palette_style_vibrant
+                                ThemePaletteStyle.EXPRESSIVE -> R.string.palette_style_expressive
+                                ThemePaletteStyle.NEUTRAL -> R.string.palette_style_neutral
+                                ThemePaletteStyle.FIDELITY -> R.string.palette_style_fidelity
+                                ThemePaletteStyle.CONTENT -> R.string.palette_style_content
+                                ThemePaletteStyle.RAINBOW -> R.string.palette_style_rainbow
+                                ThemePaletteStyle.FRUITSALAD -> R.string.palette_style_fruitsalad
+                            }
+                        )
+
+                        PaletteStyleItem(
+                            name = styleName,
+                            isSelected = isSelected,
+                            onClick = { onThemePaletteStyleChange(style) }
+                        )
+                    }
+                }
+            }
         }
+    }
+}
+
+@Composable
+fun PaletteStyleItem(
+    name: String,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    val background = if (isSelected) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant
+    }
+    val textColor = if (isSelected) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    val borderWidth by animateDpAsState(
+        targetValue = if (isSelected) 2.dp else 0.dp,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "borderWidth"
+    )
+
+    val shape = RoundedCornerShape(12.dp)
+    val interactionSource = remember { MutableInteractionSource() }
+
+    Box(
+        modifier = Modifier
+            .clip(shape)
+            .background(background)
+            .then(
+                if (borderWidth > 0.dp) {
+                    Modifier.border(
+                        width = borderWidth,
+                        color = MaterialTheme.colorScheme.primary,
+                        shape = shape
+                    )
+                } else {
+                    Modifier
+                }
+            )
+            .clickable(
+                interactionSource = interactionSource,
+                indication = ripple(),
+                onClick = onClick
+            )
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = name,
+            style = MaterialTheme.typography.labelLarge,
+            color = textColor
+        )
     }
 }
 

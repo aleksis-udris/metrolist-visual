@@ -148,6 +148,8 @@ import com.metrolist.music.constants.PureBlackKey
 import com.metrolist.music.constants.SYSTEM_DEFAULT
 import com.metrolist.music.constants.SelectedThemeColorKey
 import com.metrolist.music.constants.SimpMusicMigrationDoneKey
+import com.metrolist.music.constants.ThemePaletteStyle
+import com.metrolist.music.constants.ThemePaletteStyleKey
 import com.metrolist.music.constants.SlimNavBarHeight
 import com.metrolist.music.constants.SlimNavBarKey
 import com.metrolist.music.constants.StopMusicOnTaskClearKey
@@ -183,6 +185,7 @@ import com.metrolist.music.ui.theme.ColorSaver
 import com.metrolist.music.ui.theme.DefaultThemeColor
 import com.metrolist.music.ui.theme.MetrolistTheme
 import com.metrolist.music.ui.theme.extractThemeColor
+import com.metrolist.music.ui.theme.toPaletteStyle
 import com.metrolist.music.ui.utils.appBarScrollBehavior
 import com.metrolist.music.ui.utils.resetHeightOffset
 import com.metrolist.music.utils.SyncUtils
@@ -533,6 +536,8 @@ class MainActivity : ComponentActivity() {
         val (selectedThemeColorInt) = rememberPreference(SelectedThemeColorKey, defaultValue = DefaultThemeColor.toArgb())
         val selectedThemeColor = Color(selectedThemeColorInt)
 
+        val themePaletteStyle by rememberEnumPreference(ThemePaletteStyleKey, defaultValue = ThemePaletteStyle.TONAL_SPOT)
+
         val showChangelog = rememberSaveable { mutableStateOf(false) }
 
         var themeColor by rememberSaveable(stateSaver = ColorSaver) {
@@ -584,6 +589,7 @@ class MainActivity : ComponentActivity() {
             darkTheme = useDarkTheme,
             pureBlack = pureBlack,
             themeColor = themeColor,
+            paletteStyle = themePaletteStyle.toPaletteStyle(),
         ) {
             BoxWithConstraints(
                 modifier =

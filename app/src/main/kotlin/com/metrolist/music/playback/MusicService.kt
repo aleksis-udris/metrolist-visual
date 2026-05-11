@@ -230,6 +230,7 @@ import java.io.ObjectOutputStream
 import java.time.LocalDateTime
 import javax.inject.Inject
 import kotlin.random.Random
+import androidx.media3.exoplayer.DefaultLoadControl
 
 private const val INSTANT_SILENCE_SKIP_STEP_MS = 15_000L
 private const val INSTANT_SILENCE_SKIP_SETTLE_MS = 350L
@@ -1049,6 +1050,7 @@ class MusicService :
 
     private fun createExoPlayer(): ExoPlayer {
         val eqProcessor = CustomEqualizerAudioProcessor()
+
         equalizerService.addAudioProcessor(eqProcessor)
 
         val silenceProcessor = SilenceDetectorAudioProcessor { handleLongSilenceDetected() }
@@ -1063,6 +1065,18 @@ class MusicService :
         val player =
             ExoPlayer
                 .Builder(this)
+                .setLoadControl(
+                    DefaultLoadControl
+                        .Builder()
+                        .setBufferDurationsMs(
+                            15_000,
+                            50_000,
+                            2_500,
+                            5_000,
+                        )
+                        .setPrioritizeTimeOverSizeThresholds(true)
+                        .build(),
+                )
                 .setMediaSourceFactory(createMediaSourceFactory())
                 .setRenderersFactory(createRenderersFactory(eqProcessor, silenceProcessor))
                 .setHandleAudioBecomingNoisy(true)
@@ -1686,9 +1700,18 @@ class MusicService :
     }
 
     fun playNext(items: List<MediaItem>) {
+        // Tag items as user-queued for "Play Next"
+        val taggedItems = items.map { item ->
+            val extras = (item.mediaMetadata.extras ?: android.os.Bundle()).apply {
+                putString(QUEUE_SOURCE_KEY, QUEUE_SOURCE_USER_NEXT)
+            }
+            item.buildUpon()
+                .setMediaMetadata(item.mediaMetadata.buildUpon().setExtras(extras).build())
+                .build()
+        }
         // If queue is empty or player is idle, play immediately instead
         if (player.mediaItemCount == 0 || player.playbackState == STATE_IDLE) {
-            player.setMediaItems(items)
+            player.setMediaItems(taggedItems)
             player.prepare()
             // Don't start local playback if casting
             if (castConnectionHandler?.isCasting?.value != true) {
@@ -1719,7 +1742,7 @@ class MusicService :
         val shuffleEnabled = player.shuffleModeEnabled
 
         // Insert items immediately after the current item in the window/index space
-        player.addMediaItems(insertIndex, items)
+        player.addMediaItems(insertIndex, taggedItems)
         player.prepare()
 
         if (shuffleEnabled) {
@@ -1730,7 +1753,7 @@ class MusicService :
                 val currentIndex = player.currentMediaItemIndex
 
                 // Newly inserted indices are a contiguous range [insertIndex, insertIndex + items.size)
-                val newIndices = (insertIndex until (insertIndex + items.size)).toSet()
+                val newIndices = (insertIndex until (insertIndex + taggedItems.size)).toSet()
 
                 // Collect existing shuffle traversal order excluding current index
                 val orderAfter = mutableListOf<Int>()
@@ -1753,7 +1776,7 @@ class MusicService :
                 val existingOrder = (prevList + orderAfter).filter { it != currentIndex && it !in newIndices }
 
                 // Build new shuffle order: current -> newly inserted (in insertion order) -> rest
-                val nextBlock = (insertIndex until (insertIndex + items.size)).toList()
+                val nextBlock = (insertIndex until (insertIndex + taggedItems.size)).toList()
                 val finalOrder = IntArray(size)
                 var pos = 0
                 prevList
@@ -1781,9 +1804,18 @@ class MusicService :
     }
 
     fun addToQueue(items: List<MediaItem>) {
+        // Tag items as user-queued for "Add to Queue"
+        val taggedItems = items.map { item ->
+            val extras = (item.mediaMetadata.extras ?: android.os.Bundle()).apply {
+                putString(QUEUE_SOURCE_KEY, QUEUE_SOURCE_USER_QUEUE)
+            }
+            item.buildUpon()
+                .setMediaMetadata(item.mediaMetadata.buildUpon().setExtras(extras).build())
+                .build()
+        }
         // Remove duplicates if enabled
         if (dataStore.get(PreventDuplicateTracksInQueueKey, false)) {
-            val itemIds = items.map { it.mediaId }.toSet()
+            val itemIds = taggedItems.map { it.mediaId }.toSet()
             val indicesToRemove = mutableListOf<Int>()
             val currentIndex = player.currentMediaItemIndex
 
@@ -1799,7 +1831,23 @@ class MusicService :
             }
         }
 
-        player.addMediaItems(items)
+        // Scan forward from current position to find the first app-queued (untagged) item.
+        // User-queued items (play-next or add-to-queue) are tagged with QUEUE_SOURCE_KEY.
+        // App-queued items (playlist/album/radio) have no such tag.
+        val insertIndex = run {
+            var idx = player.currentMediaItemIndex + 1
+            while (idx < player.mediaItemCount) {
+                val src = player.getMediaItemAt(idx).mediaMetadata.extras?.getString(QUEUE_SOURCE_KEY)
+                if (src == QUEUE_SOURCE_USER_NEXT || src == QUEUE_SOURCE_USER_QUEUE) {
+                    idx++
+                } else {
+                    break
+                }
+            }
+            idx
+        }
+
+        player.addMediaItems(insertIndex, taggedItems)
         if (player.shuffleModeEnabled) {
             val shufflePlaylistFirst = dataStore.get(ShufflePlaylistFirstKey, false)
             applyShuffleOrder(player.currentMediaItemIndex, player.mediaItemCount, shufflePlaylistFirst)
@@ -4167,6 +4215,10 @@ class MusicService :
     }
 
     companion object {
+        const val QUEUE_SOURCE_KEY = "queue_source"
+        const val QUEUE_SOURCE_USER_NEXT = "user_next"   // "Play next" — user explicitly queued to play next
+        const val QUEUE_SOURCE_USER_QUEUE = "user_queue" // "Add to queue" — user added to end of queue
+
         const val ACTION_ALARM_TRIGGER = "com.metrolist.music.action.ALARM_TRIGGER"
         const val EXTRA_ALARM_ID = "extra_alarm_id"
         const val EXTRA_ALARM_PLAYLIST_ID = "extra_alarm_playlist_id"

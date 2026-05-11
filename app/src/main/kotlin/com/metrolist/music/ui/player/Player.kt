@@ -17,9 +17,15 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -92,6 +98,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
@@ -111,6 +118,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
@@ -197,7 +206,6 @@ import androidx.datastore.preferences.core.edit
 import com.metrolist.music.constants.SleepTimerFadeOutKey
 import com.metrolist.music.constants.SleepTimerStopAfterCurrentSongKey
 import com.metrolist.music.ui.menu.AddToPlaylistDialog
-
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -816,27 +824,117 @@ fun BottomSheetPlayer(
                             label = "blurBackground",
                         ) { thumbnailUrl ->
                             if (thumbnailUrl != null) {
+                                val transition = rememberInfiniteTransition(label = "blurChaos")
+
+                                // Faster, asymmetric motion
+                                val driftX by transition.animateFloat(
+                                    initialValue = -0.35f,
+                                    targetValue = 0.35f,
+                                    animationSpec = infiniteRepeatable(
+                                        animation = tween(6000, easing = FastOutSlowInEasing),
+                                        repeatMode = RepeatMode.Reverse
+                                    ),
+                                    label = "driftX"
+                                )
+
+                                val driftY by transition.animateFloat(
+                                    initialValue = -0.3f,
+                                    targetValue = 0.3f,
+                                    animationSpec = infiniteRepeatable(
+                                        animation = tween(8200, easing = LinearOutSlowInEasing),
+                                        repeatMode = RepeatMode.Reverse
+                                    ),
+                                    label = "driftY"
+                                )
+
+                                // Micro jitter so it doesn’t feel robotic
+                                val jitterX by transition.animateFloat(
+                                    initialValue = -0.03f,
+                                    targetValue = 0.03f,
+                                    animationSpec = infiniteRepeatable(
+                                        animation = tween(1200, easing = LinearEasing),
+                                        repeatMode = RepeatMode.Reverse
+                                    ),
+                                    label = "jitterX"
+                                )
+
+                                val jitterY by transition.animateFloat(
+                                    initialValue = -0.03f,
+                                    targetValue = 0.03f,
+                                    animationSpec = infiniteRepeatable(
+                                        animation = tween(1600, easing = LinearEasing),
+                                        repeatMode = RepeatMode.Reverse
+                                    ),
+                                    label = "jitterY"
+                                )
+
+                                // Subtle scale breathing
+                                val scale by transition.animateFloat(
+                                    initialValue = 1.45f,
+                                    targetValue = 1.6f,
+                                    animationSpec = infiniteRepeatable(
+                                        animation = tween(9000, easing = FastOutSlowInEasing),
+                                        repeatMode = RepeatMode.Reverse
+                                    ),
+                                    label = "scale"
+                                )
+
+                                // Optional blur pulse
+                                val blurRadius by transition.animateFloat(
+                                    initialValue = if (useDarkTheme) 120f else 90f,
+                                    targetValue = if (useDarkTheme) 160f else 120f,
+                                    animationSpec = infiniteRepeatable(
+                                        animation = tween(7000, easing = FastOutSlowInEasing),
+                                        repeatMode = RepeatMode.Reverse
+                                    ),
+                                    label = "blur"
+                                )
+
                                 Box(modifier = Modifier.alpha(backgroundAlpha)) {
                                     AsyncImage(
-                                        model =
-                                            ImageRequest
-                                                .Builder(context)
-                                                .data(thumbnailUrl)
-                                                .size(100, 100)
-                                                .allowHardware(false)
-                                                .build(),
+                                        model = ImageRequest.Builder(context)
+                                            .data(thumbnailUrl)
+                                            .size(300, 300)
+                                            .allowHardware(false)
+                                            .build(),
                                         contentDescription = null,
                                         contentScale = ContentScale.Crop,
-                                        modifier =
-                                            Modifier
-                                                .fillMaxSize()
-                                                .blur(if (useDarkTheme) 150.dp else 100.dp),
-                                    )
-                                    Box(
-                                        modifier =
-                                            Modifier
-                                                .fillMaxSize()
-                                                .background(Color.Black.copy(alpha = 0.3f)),
+                                        colorFilter = ColorFilter.colorMatrix(
+                                            ColorMatrix(
+                                                floatArrayOf(
+                                                    1f,
+                                                    0f,
+                                                    0f,
+                                                    0f,
+                                                    -35f, // Red channel offset (lower to darken)
+                                                    0f,
+                                                    1f,
+                                                    0f,
+                                                    0f,
+                                                    -35f, // Green channel offset
+                                                    0f,
+                                                    0f,
+                                                    1f,
+                                                    0f,
+                                                    -35f, // Blue channel offset
+                                                    0f,
+                                                    0f,
+                                                    0f,
+                                                    1f,
+                                                    0f    // Alpha channel
+                                                )
+                                            )
+                                        ),
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .graphicsLayer {
+                                                scaleX = scale * 1.5f
+                                                scaleY = scale * 1.5f
+                                                translationX = (driftX + jitterX) * size.width
+                                                translationY = (driftY + jitterY) * size.height
+                                            }
+                                            .blur(blurRadius.dp)
+
                                     )
                                 }
                             }

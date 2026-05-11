@@ -504,7 +504,7 @@ fun YouTubePlaylistMenu(
                                                 playerConnection.playNext(
                                                     songs.map {
                                                         it
-                                                            .copy(thumbnail = it.thumbnail.resize(544, 544))
+                                                            .copy(thumbnail = it.thumbnail.resize(1080, 1080))
                                                             .toMediaItem()
                                                     },
                                                 )

@@ -446,6 +446,19 @@ val LyricsTextPositionKey = stringPreferencesKey("lyricsTextPosition")
 val LyricsClickKey = booleanPreferencesKey("lyricsClick")
 val LyricsScrollKey = booleanPreferencesKey("lyricsScrollKey")
 val HideStatusBarOnFullscreenKey = booleanPreferencesKey("hideStatusBarOnFullscreen")
+val ThemePaletteStyleKey = stringPreferencesKey("themePaletteStyle")
+
+enum class ThemePaletteStyle {
+    TONAL_SPOT,
+    VIBRANT,
+    EXPRESSIVE,
+    NEUTRAL,
+    FRUITSALAD,
+    FIDELITY,
+    CONTENT,
+    RAINBOW,
+}
+
 val LyricsRomanizeAsMainKey = booleanPreferencesKey("lyricsRomanizeAsMain")
 val LyricsRomanizeCyrillicByLineKey = booleanPreferencesKey("lyricsRomanizeCyrillicByLine")
 val OpenRouterApiKey = stringPreferencesKey("openRouterApiKey")
