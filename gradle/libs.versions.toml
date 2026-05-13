@@ -37,6 +37,7 @@ extractor = "6305155"
 tinypinyin = "2.0.3"
 protobuf = "4.34.1"
 foundation = "1.11.1"
+animationCore = "1.11.1"
 
 [libraries]
 guava = { module = "com.google.guava:guava", version.ref = "guava" }
@@ -119,6 +120,7 @@ tinypinyin = { module = "com.github.promeG:tinypinyin", version.ref = "tinypinyi
 protobuf-javalite = { module = "com.google.protobuf:protobuf-javalite", version.ref = "protobuf" }
 protobuf-kotlin-lite = { module = "com.google.protobuf:protobuf-kotlin-lite", version.ref = "protobuf" }
 foundation = { group = "androidx.compose.foundation", name = "foundation", version.ref = "foundation" }
+animation-core = { group = "androidx.compose.animation", name = "animation-core", version.ref = "animationCore" }
 
 [plugins]
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

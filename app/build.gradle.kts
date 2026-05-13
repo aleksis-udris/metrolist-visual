@@ -323,6 +323,7 @@ configurations.configureEach {
 }
 
 dependencies {
+    implementation(libs.animation.core)
     implementation(libs.foundation)
     implementation(libs.guava)
     implementation(libs.coroutines.guava)
