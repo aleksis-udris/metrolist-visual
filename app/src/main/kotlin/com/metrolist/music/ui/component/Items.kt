@@ -9,7 +9,15 @@ package com.metrolist.music.ui.component
 
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandIn
 import androidx.compose.animation.fadeIn
@@ -21,6 +29,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -30,6 +39,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -39,12 +49,18 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.scale
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.Text
+import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -59,9 +75,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
@@ -73,17 +91,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastForEachIndexed
 import androidx.compose.ui.zIndex
+import androidx.graphics.shapes.RoundedPolygon
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.Download.STATE_COMPLETED
 import androidx.media3.exoplayer.offline.Download.STATE_DOWNLOADING
 import androidx.media3.exoplayer.offline.Download.STATE_QUEUED
 import coil3.compose.AsyncImage
+import coil3.request.CachePolicy
 import coil3.request.ImageRequest
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.AlbumItem
@@ -124,6 +145,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
@@ -136,6 +158,7 @@ fun currentGridThumbnailHeight(): Dp {
 }
 
 // Basic list item - optimized with inline to reduce recomposition
+// Updated ListItem overload to better handle isNowPlaying state
 @Composable
 inline fun ListItem(
     modifier: Modifier = Modifier,
@@ -146,30 +169,50 @@ inline fun ListItem(
     isSelected: Boolean? = false,
     isActive: Boolean = false,
     isAvailable: Boolean = true,
+    isInQueue: Boolean = false,
+    isNowPlaying: Boolean = false,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = if (isActive) {
-            modifier // playing highlight
-                .height(ListItemHeight)
-                .padding(horizontal = 8.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(
-                    color = // selected active
-                        if (isSelected == true) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
-                        else MaterialTheme.colorScheme.secondaryContainer
-                )
-        } else if (isSelected == true) {
-            modifier // inactive selected
-                .height(ListItemHeight)
-                .padding(horizontal = 8.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(color = MaterialTheme.colorScheme.inversePrimary.copy(alpha = 0.4f))
-        } else {
-            modifier // default
-                .height(ListItemHeight)
-                .padding(horizontal = 8.dp)
-        }
+        modifier = modifier
+            .then(
+                when {
+                    isNowPlaying -> {
+                        // fillMaxHeight defers to the animateContentSize parent Box —
+                        // setting a fixed height here would instantly jump to the target
+                        // size and bypass the animation entirely.
+                        Modifier
+                            .fillMaxWidth()
+                            .fillMaxHeight()
+                            .background(
+                                color = MaterialTheme.colorScheme.inversePrimary.copy(alpha = 0.4f)
+                            )
+                            .padding(horizontal = 8.dp)
+                    }
+                    isActive && !isInQueue -> {
+                        Modifier
+                            .fillMaxWidth()
+                            .height(ListItemHeight)
+                            .background(
+                                color = if (isSelected == true) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                                else MaterialTheme.colorScheme.secondaryContainer
+                            )
+                            .padding(horizontal = 8.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                    }
+                    isSelected == true && !isInQueue -> {
+                        Modifier
+                            .fillMaxWidth()
+                            .height(ListItemHeight)
+                            .background(color = MaterialTheme.colorScheme.inversePrimary.copy(alpha = 0.4f))
+                            .padding(horizontal = 8.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                    }
+                    else -> {
+                        Modifier.height(ListItemHeight)
+                    }
+                }
+            )
     ) {
         Box(
             modifier = Modifier.padding(6.dp),
@@ -201,11 +244,15 @@ inline fun ListItem(
         Column(
             modifier = Modifier
                 .weight(1f)
-                .padding(horizontal = 6.dp)
+                .padding(horizontal = 6.dp),
+            // Center vertically within the row, but allow text to size naturally
+            verticalArrangement = Arrangement.Center
         ) {
             Text(
                 text = title,
-                style = MaterialTheme.typography.bodyMedium,
+                // Scale up title when now playing in queue
+                style = if (isNowPlaying) MaterialTheme.typography.titleMedium
+                else MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -221,6 +268,41 @@ inline fun ListItem(
         trailingContent()
     }
 }
+
+@Composable
+fun ListItem(
+    modifier: Modifier = Modifier,
+    title: String,
+    subtitle: AnnotatedString?,
+    badges: @Composable RowScope.() -> Unit = {},
+    thumbnailContent: @Composable () -> Unit,
+    trailingContent: @Composable RowScope.() -> Unit = {},
+    isSelected: Boolean? = false,
+    isActive: Boolean = false,
+    isInQueue: Boolean = false,
+    isNowPlaying: Boolean = false
+) = ListItem(
+    title = title,
+    subtitle = {
+        badges()
+        if (subtitle != null) {
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.secondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    },
+    thumbnailContent = thumbnailContent,
+    trailingContent = trailingContent,
+    modifier = modifier,
+    isSelected = isSelected,
+    isActive = isActive,
+    isInQueue = isInQueue,
+    isNowPlaying = isNowPlaying
+)
 
 @Composable
 fun ListItem(
@@ -529,9 +611,9 @@ fun ArtistListItem(
         AsyncImage(
             model = ImageRequest.Builder(LocalContext.current)
                 .data(artist.artist.thumbnailUrl)
-                .memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
-                .diskCachePolicy(coil3.request.CachePolicy.ENABLED)
-                .networkCachePolicy(coil3.request.CachePolicy.ENABLED)
+                .memoryCachePolicy(CachePolicy.ENABLED)
+                .diskCachePolicy(CachePolicy.ENABLED)
+                .networkCachePolicy(CachePolicy.ENABLED)
                 .build(),
             contentDescription = null,
             modifier = Modifier
@@ -561,9 +643,9 @@ fun ArtistGridItem(
         AsyncImage(
             model = ImageRequest.Builder(LocalContext.current)
                 .data(artist.artist.thumbnailUrl)
-                .memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
-                .diskCachePolicy(coil3.request.CachePolicy.ENABLED)
-                .networkCachePolicy(coil3.request.CachePolicy.ENABLED)
+                .memoryCachePolicy(CachePolicy.ENABLED)
+                .diskCachePolicy(CachePolicy.ENABLED)
+                .networkCachePolicy(CachePolicy.ENABLED)
                 .build(),
             contentDescription = null,
             contentScale = ContentScale.Crop,
@@ -594,7 +676,7 @@ fun AlbumListItem(
         val allDownloads by downloadUtil.downloads.collectAsStateWithLifecycle()
 
         val downloadState by remember(songs, allDownloads) {
-            androidx.compose.runtime.mutableIntStateOf(
+            mutableIntStateOf(
                 if (songs.isEmpty()) {
                     Download.STATE_STOPPED
                 } else {
@@ -657,7 +739,7 @@ fun AlbumGridItem(
         val allDownloads by downloadUtil.downloads.collectAsStateWithLifecycle()
 
         val downloadState by remember(songs, allDownloads) {
-            androidx.compose.runtime.mutableIntStateOf(
+            mutableIntStateOf(
                 if (songs.isEmpty()) {
                     Download.STATE_STOPPED
                 } else {
@@ -750,7 +832,7 @@ fun PlaylistListItem(
         val allDownloads by downloadUtil.downloads.collectAsStateWithLifecycle()
 
         val downloadState by remember(songs, allDownloads) {
-            androidx.compose.runtime.mutableIntStateOf(
+            mutableIntStateOf(
                 if (songs.isEmpty()) {
                     Download.STATE_STOPPED
                 } else {
@@ -918,6 +1000,7 @@ fun PlaylistGridItem(
     modifier = modifier
 )
 
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun MediaMetadataListItem(
     mediaMetadata: MediaMetadata,
@@ -925,44 +1008,66 @@ fun MediaMetadataListItem(
     isSelected: Boolean = false,
     isActive: Boolean = false,
     isPlaying: Boolean = false,
+    isInQueue: Boolean = false,
     trailingContent: @Composable RowScope.() -> Unit = {},
 ) {
-    ListItem(
-        title = mediaMetadata.title,
-        subtitle = if (mediaMetadata.suggestedBy != null) {
-            buildAnnotatedString {
-                append(mediaMetadata.artists.joinToString { it.name })
-                append(" • ")
-                append(makeTimeString(mediaMetadata.duration * 1000L))
-                append(" • ")
-                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
-                    append(mediaMetadata.suggestedBy)
-                }
-            }
-        } else {
-            AnnotatedString(
-                joinByBullet(
-                    mediaMetadata.artists.joinToString { it.name },
-                    makeTimeString(mediaMetadata.duration * 1000L)
-                )
-            )
-        },
-        badges = { if (mediaMetadata.explicit) Icon.Explicit()},
-        thumbnailContent = {
-            ItemThumbnail(
-                thumbnailUrl = mediaMetadata.thumbnailUrl,
-                albumIndex = null,
-                isSelected = isSelected,
-                isActive = isActive,
-                isPlaying = isPlaying,
-                shape = RoundedCornerShape(ThumbnailCornerRadius),
-                modifier = Modifier.size(ListThumbnailSize)
-            )
-        },
-        trailingContent = trailingContent,
-        modifier = modifier,
-        isActive = isActive
+    val isNowPlaying = isActive && isInQueue
+
+    val animatedThumbSize by animateDpAsState(
+        targetValue = if (isNowPlaying) ListThumbnailSize * 2 else ListThumbnailSize,
+        animationSpec = tween(300, easing = FastOutSlowInEasing),
+        label = "nowPlayingThumbSize"
     )
+
+    // animateContentSize() is placed BEFORE clip() so the box smoothly grows/shrinks
+    // in the layout pass. clip() must come after so it doesn't cut off content mid-animation.
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .animateContentSize(
+                animationSpec = tween(300, easing = FastOutSlowInEasing)
+            )
+            .clip(RoundedCornerShape(16.dp))
+    ) {
+        ListItem(
+            title = mediaMetadata.title,
+            subtitle = if (mediaMetadata.suggestedBy != null) {
+                buildAnnotatedString {
+                    append(mediaMetadata.artists.joinToString { it.name })
+                    append(" • ")
+                    append(makeTimeString(mediaMetadata.duration * 1000L))
+                    append(" • ")
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                        append(mediaMetadata.suggestedBy)
+                    }
+                }
+            } else {
+                AnnotatedString(
+                    joinByBullet(
+                        mediaMetadata.artists.joinToString { it.name },
+                        makeTimeString(mediaMetadata.duration * 1000L)
+                    )
+                )
+            },
+            badges = { if (mediaMetadata.explicit) Icon.Explicit() },
+            thumbnailContent = {
+                ItemThumbnail(
+                    thumbnailUrl = mediaMetadata.thumbnailUrl,
+                    albumIndex = null,
+                    isSelected = isSelected,
+                    isActive = isActive,
+                    isPlaying = isPlaying,
+                    shape = MaterialShapes.Cookie12Sided,
+                    modifier = Modifier.size(animatedThumbSize)
+                )
+            },
+            trailingContent = trailingContent,
+            isActive = isActive,
+            isSelected = isSelected,
+            isInQueue = isInQueue,
+            isNowPlaying = isNowPlaying,
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1286,7 +1391,7 @@ fun ItemThumbnail(
     thumbnailRatio: Float = 1f
 ) {
     val cropAlbumArt by rememberPreference(CropAlbumArtKey, false)
-    
+
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
@@ -1298,9 +1403,9 @@ fun ItemThumbnail(
             AsyncImage(
                 model = ImageRequest.Builder(LocalContext.current)
                     .data(thumbnailUrl)
-                    .memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
-                    .diskCachePolicy(coil3.request.CachePolicy.ENABLED)
-                    .networkCachePolicy(coil3.request.CachePolicy.ENABLED)
+                    .memoryCachePolicy(CachePolicy.ENABLED)
+                    .diskCachePolicy(CachePolicy.ENABLED)
+                    .networkCachePolicy(CachePolicy.ENABLED)
                     .build(),
                 contentDescription = null,
                 contentScale = if (cropAlbumArt) ContentScale.Crop else ContentScale.Fit,
@@ -1356,6 +1461,115 @@ fun ItemThumbnail(
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+fun ItemThumbnail(
+    thumbnailUrl: String?,
+    isActive: Boolean,
+    isPlaying: Boolean,
+    shape: RoundedPolygon,
+    modifier: Modifier = Modifier,
+    albumIndex: Int? = null,
+    isSelected: Boolean = false,
+    thumbnailRatio: Float = 1f
+) {
+    val cropAlbumArt by rememberPreference(CropAlbumArtKey, false)
+    val infiniteTransition = rememberInfiniteTransition(label = "PlayingAlbumRotation")
+
+    val rotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(10000, easing = LinearEasing)
+        ),
+        "RotationAnimation"
+    )
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = if (isPlaying) {
+            modifier.fillMaxHeight().graphicsLayer{
+                rotationZ = rotation
+            }
+        } else {
+            modifier.fillMaxHeight()
+        }
+            .aspectRatio(thumbnailRatio)
+            .clip(shape.toShape())
+    ) {
+        if (albumIndex == null) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(thumbnailUrl)
+                    .memoryCachePolicy(CachePolicy.ENABLED)
+                    .diskCachePolicy(CachePolicy.ENABLED)
+                    .networkCachePolicy(CachePolicy.ENABLED)
+                    .build(),
+                contentDescription = null,
+                contentScale = if (cropAlbumArt) ContentScale.Crop else ContentScale.Fit,
+                modifier = if (isPlaying) {
+                    Modifier.graphicsLayer{
+                        rotationZ = -rotation
+                    }
+                } else {
+                    Modifier
+                }
+                    .fillMaxWidth()
+                    .clip(shape.toShape())
+            )
+        }
+
+        if (albumIndex != null) {
+            AnimatedVisibility(
+                visible = !isActive,
+                enter = fadeIn() + expandIn(expandFrom = Alignment.Center),
+                exit = shrinkOut(shrinkTowards = Alignment.Center) + fadeOut()
+            ) {
+                Text(
+                    text = albumIndex.toString(),
+                    style = MaterialTheme.typography.labelLarge
+                )
+            }
+        }
+
+        if (isSelected) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(1f)
+                    .clip(shape.toShape())
+                    .background(Color.Black.copy(alpha = 0.5f))
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.done),
+                    contentDescription = null
+                )
+            }
+        }
+
+        PlayingIndicatorBox(
+            isActive = isActive,
+            playWhenReady = isPlaying,
+            color = if (albumIndex != null) MaterialTheme.colorScheme.onBackground else Color.White,
+            modifier = if (isPlaying) {
+                Modifier.graphicsLayer{
+                    rotationZ = -rotation
+                }
+            } else {
+                Modifier
+            }
+                .fillMaxSize()
+                .background(
+                    color = if (albumIndex != null)
+                        Color.Transparent
+                    else
+                        Color.Black.copy(alpha = ActiveBoxAlpha),
+                    shape = shape.toShape()
+                )
+        )
+    }
+}
+
 @Composable
 fun LocalThumbnail(
     thumbnailUrl: String?,
@@ -1368,7 +1582,7 @@ fun LocalThumbnail(
     thumbnailRatio: Float = 1f
 ) {
     val cropAlbumArt by rememberPreference(CropAlbumArtKey, false)
-    
+
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
@@ -1378,9 +1592,9 @@ fun LocalThumbnail(
         AsyncImage(
             model = ImageRequest.Builder(LocalContext.current)
                 .data(thumbnailUrl)
-                .memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
-                .diskCachePolicy(coil3.request.CachePolicy.ENABLED)
-                .networkCachePolicy(coil3.request.CachePolicy.ENABLED)
+                .memoryCachePolicy(CachePolicy.ENABLED)
+                .diskCachePolicy(CachePolicy.ENABLED)
+                .networkCachePolicy(CachePolicy.ENABLED)
                 .build(),
             contentDescription = null,
             contentScale = if (cropAlbumArt) ContentScale.Crop else ContentScale.Fit,
@@ -1474,7 +1688,7 @@ fun PlaylistThumbnail(
     cacheKey: String? = null
 ) {
     val cropAlbumArt by rememberPreference(CropAlbumArtKey, false)
-    
+
     when (thumbnails.size) {
         0 -> Box(
             contentAlignment = Alignment.Center,
@@ -1489,9 +1703,9 @@ fun PlaylistThumbnail(
             model = ImageRequest.Builder(LocalContext.current)
                 .data(thumbnails[0])
                 .apply { /* Removed cache key extensions due to unresolved in env */ }
-                .memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
-                .diskCachePolicy(coil3.request.CachePolicy.ENABLED)
-                .networkCachePolicy(coil3.request.CachePolicy.ENABLED)
+                .memoryCachePolicy(CachePolicy.ENABLED)
+                .diskCachePolicy(CachePolicy.ENABLED)
+                .networkCachePolicy(CachePolicy.ENABLED)
                 .build(),
             contentDescription = null,
             contentScale = if (cropAlbumArt) ContentScale.Crop else ContentScale.Fit,
